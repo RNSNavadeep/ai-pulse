@@ -1,0 +1,274 @@
+name: AI Pulse Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run mode (enrich & cache in DB; NO Telegram alerts sent)"
+        type: boolean
+        required: true
+        default: true
+      confirm_live:
+        description: "Safety lock: Type 'LIVE' to confirm real Telegram dispatch"
+        type: string
+        required: false
+        default: "DRY"
+  # Automatic schedule remains disabled until manual verification is complete
+  # schedule:
+  #   - cron: "17,47 * * * *"
+
+concurrency:
+  group: ai-pulse-database-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-monitor-cycle:
+    name: Execute News Monitoring Cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Public Code Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Private Database Repository
+        uses: actions/checkout@v4
+        with:
+          repository: RNSNavadeep/ai-pulse-data
+          token: ${{ secrets.DB_STORAGE_PAT }}
+          path: db-storage
+          fetch-depth: 1
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pre-Flight Check & Baseline Anchor Recording
+        id: preflight
+        run: |
+          cd db-storage
+          git remote -v
+          git fetch origin main
+          BASE_SHA=$(git rev-parse origin/main)
+          echo "base_sha=$BASE_SHA" >> $GITHUB_OUTPUT
+          echo "✅ Pre-flight check passed. Remote anchor SHA: $BASE_SHA"
+
+      - name: Restore SQLite Database
+        id: restore_db
+        run: |
+          mkdir -p data
+          if [ -f db-storage/ai_pulse.db ]; then
+            cp db-storage/ai_pulse.db data/ai_pulse.db
+            echo "✅ Restored production database: data/ai_pulse.db"
+          else
+            echo "❌ CRITICAL: Production database 'ai_pulse.db' not found in private storage!" >&2
+            echo "   Automatic fallback to stale initial backup is disabled." >&2
+            echo "   Please upload the verified production database before running." >&2
+            exit 1
+          fi
+
+      - name: Verify Pre-Run Database Integrity & Capture Sent Identifiers
+        id: pre_db
+        run: |
+          python -c "
+          import sqlite3, json, os
+
+          conn = sqlite3.connect('file:data/ai_pulse.db?mode=ro', uri=True)
+          cur = conn.cursor()
+          cur.execute('PRAGMA integrity_check;')
+          assert cur.fetchone()[0] == 'ok', 'Pre-run integrity check failed'
+
+          cur.execute('SELECT COUNT(1) FROM articles;')
+          total = cur.fetchone()[0]
+
+          cur.execute(\"SELECT COUNT(1) FROM articles WHERE status='ignored';\")
+          ignored = cur.fetchone()[0]
+
+          # Capture exact set of all pre-run sent record IDs
+          cur.execute(\"SELECT id FROM articles WHERE status='sent';\")
+          sent_ids = [row[0] for row in cur.fetchall()]
+          conn.close()
+
+          with open('data/pre_run_sent_ids.json', 'w', encoding='utf-8') as f:
+              json.dump(sent_ids, f)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'pre_total={total}\n')
+              f.write(f'pre_sent_count={len(sent_ids)}\n')
+              f.write(f'pre_ignored={ignored}\n')
+
+          print(f'Pre-run baseline captured: total={total}, sent={len(sent_ids)}, ignored={ignored}')
+          "
+
+      - name: Execute Monitoring Cycle
+        id: cycle
+        continue-on-error: true  # Allows downstream safety gates to inspect and preserve durable state
+        env:
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_CONFIRM_LIVE: ${{ github.event.inputs.confirm_live }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: "gemini-3.1-flash-lite"
+          MAX_NOTIFICATIONS_PER_RUN: "3"
+          GEMINI_MAX_REQUESTS_PER_CYCLE: "3"
+          GEMINI_DAILY_LIMIT: "100"
+          LLM_ENABLED: "true"
+          GEMINI_REQUEST_TIMEOUT_MS: "25000"
+          GEMINI_MAX_SDK_RETRIES: "0"
+          POLL_INTERVAL_SECONDS: "1800"
+          INITIAL_RUN_SEND_ALERTS: "false"
+        run: |
+          if [ "$INPUT_DRY_RUN" = "false" ] && [ "$INPUT_CONFIRM_LIVE" = "LIVE" ]; then
+            echo "🚀 LIVE MODE: Executing cycle with live Telegram alerts..."
+            python app.py --run-cycle
+          else
+            echo "🛡️ SAFE MODE: Executing cycle with --dry-run (no Telegram alerts dispatched)..."
+            python app.py --run-cycle --dry-run
+          fi
+
+      - name: Emergency Artifact Safety Net
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-pulse-db-emergency-backup-${{ github.run_number }}
+          path: data/ai_pulse.db
+          retention-days: 1
+          overwrite: true
+
+      - name: Validate Post-Run Database Invariants & Sent Identity
+        id: validate_post_db
+        if: always()
+        run: |
+          if [ ! -f data/ai_pulse.db ]; then
+            echo "❌ CRITICAL: Database file missing after execution!" >&2
+            echo "is_valid=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          python -c "
+          import sqlite3, sys, json, os
+
+          try:
+              # 1. Physical SQLite page integrity
+              conn = sqlite3.connect('file:data/ai_pulse.db?mode=ro', uri=True)
+              cur = conn.cursor()
+              cur.execute('PRAGMA integrity_check;')
+              assert cur.fetchone()[0] == 'ok', 'Corrupted SQLite pages'
+
+              # 2. Monotonic count invariants
+              cur.execute('SELECT COUNT(1) FROM articles;')
+              post_total = cur.fetchone()[0]
+              cur.execute(\"SELECT COUNT(1) FROM articles WHERE status='ignored';\")
+              post_ignored = cur.fetchone()[0]
+
+              pre_total = int('${{ steps.pre_db.outputs.pre_total }}')
+              pre_ignored = int('${{ steps.pre_db.outputs.pre_ignored }}')
+
+              assert post_total >= pre_total, f'Total articles decreased: {post_total} < {pre_total}'
+              assert post_ignored == pre_ignored, f'Ignored baseline altered: {post_ignored} != {pre_ignored}'
+
+              # 3. Exact Sent-ID Set Inclusion (No SQL IN clause)
+              with open('data/pre_run_sent_ids.json', 'r', encoding='utf-8') as f:
+                  pre_sent_ids = set(json.load(f))
+
+              cur.execute(\"SELECT id FROM articles WHERE status='sent';\")
+              post_sent_ids = set(row[0] for row in cur.fetchall())
+              conn.close()
+
+              # Assert every pre-run sent ID is present in post-run sent IDs (pre_sent_ids ⊆ post_sent_ids)
+              missing_or_reverted = pre_sent_ids - post_sent_ids
+              assert not missing_or_reverted, f'Previously sent articles missing or reverted from sent state: {missing_or_reverted}'
+
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('is_valid=true\n')
+              print(f'✅ Post-run validation passed: all {len(pre_sent_ids)} pre-run sent articles remain verified sent.')
+          except Exception as e:
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('is_valid=false\n')
+              print(f'❌ Database validation FAILED: {e}', file=sys.stderr)
+          "
+
+      - name: Synchronize Verified Database to Private Repository
+        if: steps.validate_post_db.outputs.is_valid == 'true'
+        run: |
+          cp data/ai_pulse.db db-storage/ai_pulse.db
+          cd db-storage
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet ai_pulse.db; then
+            echo "ℹ️ No database modifications in this cycle. Skipping commit."
+          else
+            git add ai_pulse.db
+            git commit -m "chore(db): update article state [skip ci]"
+            LOCAL_COMMIT_SHA=$(git rev-parse HEAD)
+
+            # Fast-forward & out-of-band divergence check
+            git fetch origin main
+            CURRENT_REMOTE_SHA=$(git rev-parse origin/main)
+            EXPECTED_BASE_SHA="${{ steps.preflight.outputs.base_sha }}"
+            if [ "$CURRENT_REMOTE_SHA" != "$EXPECTED_BASE_SHA" ]; then
+              echo "❌ CRITICAL: Remote repository moved ahead out-of-band!" >&2
+              echo "   Expected Anchor SHA: $EXPECTED_BASE_SHA" >&2
+              echo "   Current Remote SHA:  $CURRENT_REMOTE_SHA" >&2
+              echo "   Aborting push to prevent overwriting newer database state." >&2
+              exit 1
+            fi
+
+            # Resilient push with ghost-success detection
+            pushed=false
+            for attempt in 1 2 3; do
+              echo "Pushing database state to private repository (attempt $attempt/3)..."
+              if git push origin main; then
+                pushed=true
+                break
+              fi
+
+              # Check if push actually succeeded despite connection error (ghost-success)
+              git fetch origin main
+              FETCHED_REMOTE_SHA=$(git rev-parse origin/main)
+              if [ "$FETCHED_REMOTE_SHA" = "$LOCAL_COMMIT_SHA" ]; then
+                echo "✅ Ghost-success detected: Remote accepted commit despite client network drop."
+                pushed=true
+                break
+              elif [ "$FETCHED_REMOTE_SHA" != "$EXPECTED_BASE_SHA" ]; then
+                echo "❌ CRITICAL: Remote branch diverged during retry loop! Aborting." >&2
+                exit 1
+              fi
+
+              echo "⚠️ Push attempt $attempt failed. Retrying in 5 seconds..."
+              sleep 5
+            done
+
+            if [ "$pushed" != "true" ]; then
+              echo "❌ CRITICAL: Failed to push database state after 3 attempts." >&2
+              exit 1
+            fi
+
+            # Explicit post-push verification of production database commit
+            git fetch origin main
+            FINAL_REMOTE_SHA=$(git rev-parse origin/main)
+            if [ "$FINAL_REMOTE_SHA" != "$LOCAL_COMMIT_SHA" ]; then
+              echo "❌ CRITICAL: Post-push verification failed! Local and remote SHAs do not match." >&2
+              exit 1
+            fi
+            echo "✅ Production database successfully persisted and verified ($FINAL_REMOTE_SHA)."
+          fi
+
+      - name: Propagate Cycle Failure
+        if: steps.cycle.outcome != 'success'
+        run: |
+          echo "❌ CRITICAL: The monitoring cycle encountered an error during execution." >&2
+          echo "   Database was safely synchronized if valid, but workflow is marked as FAILED." >&2
+          exit 1

@@ -149,6 +149,9 @@ jobs:
       - name: Validate Post-Run Database Invariants & Sent Identity
         id: validate_post_db
         if: always()
+        env:
+          PRE_TOTAL: ${{ steps.pre_db.outputs.pre_total }}
+          PRE_IGNORED: ${{ steps.pre_db.outputs.pre_ignored }}
         run: |
           if [ ! -f data/ai_pulse.db ]; then
             echo "❌ CRITICAL: Database file missing after execution!" >&2
@@ -172,8 +175,8 @@ jobs:
               cur.execute(\"SELECT COUNT(1) FROM articles WHERE status='ignored';\")
               post_ignored = cur.fetchone()[0]
 
-              pre_total = int('${{ steps.pre_db.outputs.pre_total }}')
-              pre_ignored = int('${{ steps.pre_db.outputs.pre_ignored }}')
+              pre_total = int(os.environ['PRE_TOTAL'])
+              pre_ignored = int(os.environ['PRE_IGNORED'])
 
               assert post_total >= pre_total, f'Total articles decreased: {post_total} < {pre_total}'
               assert post_ignored == pre_ignored, f'Ignored baseline altered: {post_ignored} != {pre_ignored}'
@@ -272,3 +275,4 @@ jobs:
           echo "❌ CRITICAL: The monitoring cycle encountered an error during execution." >&2
           echo "   Database was safely synchronized if valid, but workflow is marked as FAILED." >&2
           exit 1
+

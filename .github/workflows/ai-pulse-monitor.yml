@@ -13,9 +13,8 @@ on:
         type: string
         required: false
         default: "DRY"
-  # Automatic schedule remains disabled until manual verification is complete
-  # schedule:
-  #   - cron: "17,47 * * * *"
+  schedule:
+    - cron: "17,47 * * * *"
 
 concurrency:
   group: ai-pulse-database-sync
@@ -116,10 +115,11 @@ jobs:
         env:
           INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
           INPUT_CONFIRM_LIVE: ${{ github.event.inputs.confirm_live }}
+          EVENT_NAME: ${{ github.event_name }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: "gemini-3.1-flash-lite"
+          GEMINI_MODEL: "gemini-2.0-flash-lite"
           MAX_NOTIFICATIONS_PER_RUN: "3"
           GEMINI_MAX_REQUESTS_PER_CYCLE: "3"
           GEMINI_DAILY_LIMIT: "100"
@@ -129,8 +129,11 @@ jobs:
           POLL_INTERVAL_SECONDS: "1800"
           INITIAL_RUN_SEND_ALERTS: "false"
         run: |
-          if [ "$INPUT_DRY_RUN" = "false" ] && [ "$INPUT_CONFIRM_LIVE" = "LIVE" ]; then
-            echo "🚀 LIVE MODE: Executing cycle with live Telegram alerts..."
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            echo "🕐 SCHEDULED LIVE MODE: Executing live monitoring cycle (cron trigger)..."
+            python app.py --run-cycle
+          elif [ "$INPUT_DRY_RUN" = "false" ] && [ "$INPUT_CONFIRM_LIVE" = "LIVE" ]; then
+            echo "🚀 MANUAL LIVE MODE: Executing cycle with live Telegram alerts..."
             python app.py --run-cycle
           else
             echo "🛡️ SAFE MODE: Executing cycle with --dry-run (no Telegram alerts dispatched)..."

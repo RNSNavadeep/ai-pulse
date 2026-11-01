@@ -133,8 +133,8 @@ jobs:
             echo "🕐 SCHEDULED LIVE MODE: Executing live monitoring cycle (cron trigger)..."
             python app.py --run-cycle
           elif [ "$INPUT_DRY_RUN" = "false" ] && [ "$INPUT_CONFIRM_LIVE" = "LIVE" ]; then
-            echo "🚀 MANUAL LIVE MODE: Executing cycle with live Telegram alerts..."
-            python app.py --run-cycle
+            echo "🚀 MANUAL LIVE MODE: Executing controlled live cycle (capped to 1 alert)..."
+            python app.py --run-cycle --limit 1
           else
             echo "🛡️ SAFE MODE: Executing cycle with --dry-run (no Telegram alerts dispatched)..."
             python app.py --run-cycle --dry-run

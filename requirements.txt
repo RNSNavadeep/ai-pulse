@@ -1,0 +1,14 @@
+# Core HTTP and RSS feed handling
+requests>=2.31.0
+feedparser>=6.0.11
+
+# Configuration and environment management
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+
+# Intelligence (Phase 4 - Gemini API)
+google-genai>=2.0.0
+
+# Testing
+pytest>=8.0.0
+

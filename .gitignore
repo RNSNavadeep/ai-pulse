@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment Variables & Secrets (CRITICAL: Never commit credentials!)
+.env
+.env.*
+!.env.example
+*.env.local
+
+# SQLite Database & Backups
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+
+# Process Lock & State Files
+*.lock
+agent.lock
+
+# Logs
+*.log
+logs/
+
+# IDE, OS & Agent Tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.agent/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+

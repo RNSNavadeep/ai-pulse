@@ -1,0 +1,65 @@
+[
+  {
+    "name": "OpenAI News",
+    "url": "https://openai.com/news/rss.xml",
+    "category": "releases",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "Google AI Blog",
+    "url": "https://blog.google/technology/ai/rss/",
+    "category": "industry",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "Google DeepMind",
+    "url": "https://deepmind.google/blog/rss.xml",
+    "category": "research",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "Hugging Face Blog",
+    "url": "https://huggingface.co/blog/feed.xml",
+    "category": "research",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "arXiv AI Research (cs.AI & cs.LG)",
+    "url": "https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.LG&sortBy=submittedDate&sortOrder=descending&max_results=10",
+    "category": "research",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "arXiv Recent Updates (cs.AI)",
+    "url": "https://rss.arxiv.org/rss/cs.AI",
+    "category": "research",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "MIT Technology Review - AI",
+    "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+    "category": "industry",
+    "is_pure_ai": true,
+    "enabled": true
+  },
+  {
+    "name": "TechCrunch - Artificial Intelligence",
+    "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "category": "industry",
+    "is_pure_ai": false,
+    "enabled": true
+  },
+  {
+    "name": "VentureBeat - AI",
+    "url": "https://venturebeat.com/category/ai/feed/",
+    "category": "industry",
+    "is_pure_ai": false,
+    "enabled": true
+  }
+]

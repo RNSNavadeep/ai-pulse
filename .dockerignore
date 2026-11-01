@@ -1,0 +1,14 @@
+.git/
+.venv/
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.lock
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.agent/
+tests/
